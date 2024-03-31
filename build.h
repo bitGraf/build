@@ -150,6 +150,165 @@ std::string generate_target_build_cmd(const project_config& conf, const target_c
     return compile_cmd;
 }
 
+std::string generate_compile_cmd(const project_config& conf, const target_config& targ, const std::string& src_file) {
+    // start building options into flag strings 
+    std::string default_flags = "/nologo /Gm- /GR- /EHa- /FC /c ";
+
+    std::string std_cmd = "/std:c++" + std::to_string(conf.cpp_standard) + " ";
+
+    std::string opt_cmd = "/O";
+    if (conf.opt_level == 0) opt_cmd += "d";
+    else                     opt_cmd += std::to_string(conf.opt_level);
+
+    if (conf.opt_intrinsics) opt_cmd += "i";
+
+    opt_cmd += " ";
+
+    std::string msvc_link = "/M";
+    if (conf.static_link_std) msvc_link += "T";
+    else                      msvc_link += "D";
+    if (conf.debug_build)     msvc_link += "d";
+    msvc_link += " ";
+
+    std::string compile_flags = default_flags + msvc_link + opt_cmd + std_cmd;
+    if (conf.generate_debug_info) compile_flags += "/Z7 ";
+    if (targ.type == shared_lib) compile_flags += "/LD ";
+
+
+    // assemble full command
+    // cl %IncludeDirs% %CompilerFlags% %SrcFiles% /Fe: %OutputName% /Fo: %obj_dir% /link %LinkerFlags%
+    std::string compile_cmd = "cl.exe ";
+    for (auto s : targ.include_dirs) {
+        compile_cmd += "/I" + s + " ";
+    }
+
+    compile_cmd += compile_flags;
+
+    switch (targ.warning_level) {
+        case 0: compile_cmd += "/W0 "; break;
+        case 1: compile_cmd += "/W1 "; break;
+        case 2: compile_cmd += "/W2 "; break;
+        case 3: compile_cmd += "/W3 "; break;
+        case 4: compile_cmd += "/W4 "; break;
+    }
+
+    if (targ.warnings_are_errors) {
+        compile_cmd += "/WX ";
+    }
+
+    for (auto w : targ.warnings_to_ignore) {
+        compile_cmd += "/wd" + std::to_string(w) + " ";
+    }
+
+    for (auto d : conf.common_defines) {
+        compile_cmd += "/D" + d + " ";
+    }
+    for (auto d : targ.defines) {
+        compile_cmd += "/D" + d + " ";
+    }
+
+    for (auto s : targ.src_files) {
+        compile_cmd += s + " ";
+    }
+
+
+    compile_cmd += "/Fo: " + conf.obj_dir + "\\ ";
+
+    return compile_cmd;
+}
+
+std::string generate_link_cmd(const project_config& conf, const target_config& targ) {
+    // start building options into flag strings 
+    std::string default_flags = "/nologo /Gm- /GR- /EHa- /FC ";
+
+    std::string std_cmd = "/std:c++" + std::to_string(conf.cpp_standard) + " ";
+
+    std::string opt_cmd = "/O";
+    if (conf.opt_level == 0) opt_cmd += "d";
+    else                     opt_cmd += std::to_string(conf.opt_level);
+
+    if (conf.opt_intrinsics) opt_cmd += "i";
+
+    opt_cmd += " ";
+
+    std::string msvc_link = "/M";
+    if (conf.static_link_std) msvc_link += "T";
+    else                      msvc_link += "D";
+    if (conf.debug_build)     msvc_link += "d";
+    msvc_link += " ";
+
+    std::string compile_flags = default_flags + msvc_link + opt_cmd + std_cmd;
+    if (conf.generate_debug_info) compile_flags += "/Z7 ";
+    if (targ.type == shared_lib) compile_flags += "/LD ";
+
+
+
+    std::string link_flags = "/link ";
+    
+    if (conf.incremental_link) link_flags += "/INCREMENTAL ";
+    else                       link_flags += "/INCREMENTAL:NO ";
+
+    if (conf.remove_unref_funcs) link_flags += "/OPT:REF ";
+    else                         link_flags += "/OPT:NOREF ";
+
+    std::string subsystem = targ.subsystem;
+    for (auto & c: subsystem) c = toupper(c);
+    link_flags += "/SUBSYSTEM:" + subsystem + " ";
+
+    if (targ.link_dir.size()) link_flags += "/LIBPATH:\"" + targ.link_dir + "\" ";
+
+    for (auto l : targ.link_libs) {
+        link_flags += l + " ";
+    }
+
+    // assemble full command
+    // cl %IncludeDirs% %CompilerFlags% %SrcFiles% /Fe: %OutputName% /Fo: %obj_dir% /link %LinkerFlags%
+    std::string compile_cmd = "cl.exe ";
+    for (auto s : targ.include_dirs) {
+        compile_cmd += "/I" + s + " ";
+    }
+
+    compile_cmd += compile_flags;
+
+    switch (targ.warning_level) {
+        case 0: compile_cmd += "/W0 "; break;
+        case 1: compile_cmd += "/W1 "; break;
+        case 2: compile_cmd += "/W2 "; break;
+        case 3: compile_cmd += "/W3 "; break;
+        case 4: compile_cmd += "/W4 "; break;
+    }
+
+    if (targ.warnings_are_errors) {
+        compile_cmd += "/WX ";
+    }
+
+    for (auto w : targ.warnings_to_ignore) {
+        compile_cmd += "/wd" + std::to_string(w) + " ";
+    }
+
+    for (auto d : conf.common_defines) {
+        compile_cmd += "/D" + d + " ";
+    }
+    for (auto d : targ.defines) {
+        compile_cmd += "/D" + d + " ";
+    }
+
+    for (auto s : targ.src_files) {
+        size_t last_slash = s.find_last_of('\\')+1;
+        size_t last_dot   = s.find_last_of('.');
+        std::string obj_name = s.substr(last_slash, last_dot - last_slash) + ".obj";
+        compile_cmd += conf.obj_dir + '\\' + obj_name + " ";
+    }
+
+
+    compile_cmd += "/Fe: " + conf.bin_dir + "\\" + targ.target_name + " ";
+    compile_cmd += "/Fo: " + conf.obj_dir + "\\ ";
+
+    compile_cmd += link_flags;
+
+    return compile_cmd;
+}
+
 void ensure_output_dirs(const project_config& conf) {
     char full_path[MAX_PATH];
     WIN32_FIND_DATA data;
@@ -299,6 +458,49 @@ int build_project(const project_config& conf) {
 
         printf("    Building [%s]...", targ.target_name.c_str());
         //int res = system(cmd.c_str());
+
+        std::string std_out, std_err;
+        int res = run_command(cmd, std_out, std_err);
+
+        if (res) {
+            printf("Failed! ErrorCode: %d\n", res);
+            printf("%s\n", std_out.c_str());
+            return res;
+        }
+
+        printf("Done.\n");
+    }
+
+    return 0;
+}
+
+int build_project_incremental(const project_config& conf) {
+    int num_targets = conf.targets.size();
+    printf("Project [%s]: %d targets.\n", conf.project_name.c_str(), num_targets);
+
+    ensure_output_dirs(conf);
+
+    for (int n = 0; n < num_targets; n++) {
+        const target_config& targ = conf.targets[n];
+
+        printf("    Compiling [%s]...", targ.target_name.c_str());
+        for (const auto& src : targ.src_files) {
+            std::string cmd = generate_compile_cmd(conf, targ, src);
+
+            std::string std_out, std_err;
+            int res = run_command(cmd, std_out, std_err);
+
+            if (res) {
+                printf("Failed! ErrorCode: %d\n", res);
+                printf("%s\n", std_out.c_str());
+                return res;
+            }
+
+            printf("Done.\n");
+        }
+
+        printf("    Linking [%s]...", targ.target_name.c_str());
+        std::string cmd = generate_link_cmd(conf, targ);
 
         std::string std_out, std_err;
         int res = run_command(cmd, std_out, std_err);

@@ -26,5 +26,9 @@ int main(int argc, char** argv) {
     #include "shared_lib/build.cpp"
     #include "executable/build.cpp"
 
-    return build_project(conf);
+    int err_code;
+    //err_code = build_project(conf);
+    err_code = build_project_incremental(conf);
+
+    return err_code;
 }
