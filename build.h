@@ -6,12 +6,16 @@
 #include <vector>
 #include <algorithm>
 #include <cstdarg>
+#include <unordered_map>
+#include <fstream>
 
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 #include <shlobj_core.h>
+#include <msi.h>
 
 #pragma comment( lib, "Shell32" )
+#pragma comment( lib, "Msi" )
 
 std::string ReadFromPipe(HANDLE read_from);
 int run_command(const std::string& cmd, std::string& std_out, std::string& std_err);
@@ -150,6 +154,42 @@ std::string generate_target_build_cmd(const project_config& conf, const target_c
     return compile_cmd;
 }
 
+std::string generate_preprocess_cmd(const project_config& conf, const target_config& targ, const std::string& src_file, std::string& pre_file) {
+    // start building options into flag strings 
+    std::string default_flags = "/nologo /Gm- /GR- /EHa- /FC /P ";
+
+    std::string std_cmd = "/std:c++" + std::to_string(conf.cpp_standard) + " ";
+
+    std::string compile_flags = default_flags + std_cmd;
+
+
+    // assemble full command
+    std::string compile_cmd = "cl.exe ";
+    for (auto s : targ.include_dirs) {
+        compile_cmd += "/I" + s + " ";
+    }
+
+    compile_cmd += compile_flags;
+
+    for (auto d : conf.common_defines) {
+        compile_cmd += "/D" + d + " ";
+    }
+    for (auto d : targ.defines) {
+        compile_cmd += "/D" + d + " ";
+    }
+
+    compile_cmd += src_file + " ";
+
+    compile_cmd += "/Fi: " + conf.obj_dir + "\\ ";
+
+    size_t last_slash = src_file.find_last_of('\\')+1;
+    size_t last_dot   = src_file.find_last_of('.');
+    std::string pre_name = src_file.substr(last_slash, last_dot - last_slash) + ".i";
+    pre_file = conf.obj_dir + "\\" + pre_name;
+
+    return compile_cmd;
+}
+
 std::string generate_compile_cmd(const project_config& conf, const target_config& targ, const std::string& src_file) {
     // start building options into flag strings 
     std::string default_flags = "/nologo /Gm- /GR- /EHa- /FC /c ";
@@ -207,10 +247,7 @@ std::string generate_compile_cmd(const project_config& conf, const target_config
         compile_cmd += "/D" + d + " ";
     }
 
-    for (auto s : targ.src_files) {
-        compile_cmd += s + " ";
-    }
-
+    compile_cmd += src_file + " ";
 
     compile_cmd += "/Fo: " + conf.obj_dir + "\\ ";
 
@@ -323,6 +360,14 @@ void ensure_output_dirs(const project_config& conf) {
     }
 
     // obj dir
+    GetFullPathNameA(conf.obj_dir.c_str(), MAX_PATH, full_path, NULL);
+    hFind = FindFirstFile(full_path, &data);
+    if (hFind == INVALID_HANDLE_VALUE) {
+        //CreateDirectory(full_path, NULL);
+        SHCreateDirectoryExA(NULL, full_path, NULL);
+    }
+
+    // pre dir
     GetFullPathNameA(conf.obj_dir.c_str(), MAX_PATH, full_path, NULL);
     hFind = FindFirstFile(full_path, &data);
     if (hFind == INVALID_HANDLE_VALUE) {
@@ -474,18 +519,74 @@ int build_project(const project_config& conf) {
     return 0;
 }
 
+std::unordered_map<std::string, MSIFILEHASHINFO> file_hashes;
+
+void write_table(const project_config& conf, const std::string& target_name) {
+    std::string out_name = conf.obj_dir + "\\" + conf.project_name + "_" + target_name + ".table";
+
+    FILE* fid = fopen(out_name.c_str(), "w");
+    if (fid) {
+        for (auto &kv : file_hashes) {
+            fprintf(fid, "%s, %u, %u, %u, %u\n",
+                kv.first.c_str(),
+                kv.second.dwData[0], kv.second.dwData[1], kv.second.dwData[2], kv.second.dwData[3]);
+        }
+
+        fclose(fid);
+    }
+}
+void read_table(const project_config& conf, const std::string& target_name) {
+    file_hashes.clear();
+
+    std::string in_name = conf.obj_dir + "\\" + conf.project_name + "_" + target_name + ".table";
+
+    std::ifstream fid;
+    fid.open(in_name);
+    if (fid.is_open()) {
+        std::string line;
+
+        while (!fid.eof()) {
+            std::getline(fid, line, ',');
+            if (line.size() == 0) break;
+
+            std::string filename = line;
+
+            MSIFILEHASHINFO entry;
+            entry.dwFileHashInfoSize = sizeof(MSIFILEHASHINFO);
+
+            std::getline(fid, line, ','); entry.dwData[0] = (DWORD)std::atoll(line.c_str());
+            std::getline(fid, line, ','); entry.dwData[1] = (DWORD)std::atoll(line.c_str());
+            std::getline(fid, line, ','); entry.dwData[2] = (DWORD)std::atoll(line.c_str());
+            std::getline(fid, line);      entry.dwData[3] = (DWORD)std::atoll(line.c_str());
+
+            file_hashes[filename] = entry;
+        }
+
+        fid.close();
+    }
+}
+
 int build_project_incremental(const project_config& conf) {
     int num_targets = conf.targets.size();
     printf("Project [%s]: %d targets.\n", conf.project_name.c_str(), num_targets);
 
     ensure_output_dirs(conf);
 
+    bool verbose = true;
+
     for (int n = 0; n < num_targets; n++) {
         const target_config& targ = conf.targets[n];
 
+        read_table(conf, targ.target_name);
+
         printf("    Compiling [%s]...", targ.target_name.c_str());
+        if (verbose)
+            printf("\n");
         for (const auto& src : targ.src_files) {
-            std::string cmd = generate_compile_cmd(conf, targ, src);
+            if (verbose)
+                printf("       - %s...", src.c_str());
+            std::string pre_file;
+            std::string cmd = generate_preprocess_cmd(conf, targ, src, pre_file);
 
             std::string std_out, std_err;
             int res = run_command(cmd, std_out, std_err);
@@ -493,11 +594,62 @@ int build_project_incremental(const project_config& conf) {
             if (res) {
                 printf("Failed! ErrorCode: %d\n", res);
                 printf("%s\n", std_out.c_str());
+                printf("%s\n", std_err.c_str());
                 return res;
             }
 
-            printf("Done.\n");
+            // hash the preprocessed file. if its different than our stored hash -> needs to be recompiled
+            MSIFILEHASHINFO hash_info;
+            hash_info.dwFileHashInfoSize = sizeof(MSIFILEHASHINFO);
+            UINT ret = MsiGetFileHashA(
+                pre_file.c_str(),
+                0,
+                &hash_info
+            );
+
+            //printf("hash: [%s]: %u|%u|%u|%u\n", src.c_str(), hash_info.dwData[0],hash_info.dwData[1],hash_info.dwData[2],hash_info.dwData[3]);
+            if (ERROR_SUCCESS != ret) {
+                printf("error hashing [%s]\n", pre_file.c_str());
+                return -1;
+            }
+
+            
+            bool need_to_recompile = true;
+            if (file_hashes.find(src) != file_hashes.end()) {
+                MSIFILEHASHINFO existing_hash = file_hashes[src];
+
+                need_to_recompile = false;
+                if (existing_hash.dwData[0] != hash_info.dwData[0] ||
+                    existing_hash.dwData[1] != hash_info.dwData[1] ||
+                    existing_hash.dwData[2] != hash_info.dwData[2] ||
+                    existing_hash.dwData[3] != hash_info.dwData[3]) {
+
+                    need_to_recompile = true;
+                }
+            }
+
+            file_hashes[src] = hash_info;
+
+            // if we need to recompile, do that
+            if (need_to_recompile) {
+                if (verbose)
+                    printf("recompiling...");
+
+                cmd = generate_compile_cmd(conf, targ, src);
+                res = run_command(cmd, std_out, std_err);
+
+                if (res) {
+                    printf("Failed! ErrorCode: %d\n", res);
+                    printf("%s\n", std_out.c_str());
+                    return res;
+                }
+            }
+            if (verbose)
+                printf("done!\n");
         }
+        if (verbose)
+            printf("    Compiling [%s]...", targ.target_name.c_str());
+        printf("Done.\n");
 
         printf("    Linking [%s]...", targ.target_name.c_str());
         std::string cmd = generate_link_cmd(conf, targ);
@@ -511,7 +663,10 @@ int build_project_incremental(const project_config& conf) {
             return res;
         }
 
-        printf("Done.\n");
+        printf("Done.\n\n");
+
+        // save the hash-table to a file, so it can be reloaded and checked
+        write_table(conf, targ.target_name);
     }
 
     return 0;

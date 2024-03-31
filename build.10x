@@ -9,7 +9,7 @@
 		<IncludeFilesWithoutExt>false</IncludeFilesWithoutExt>
 		<IsVirtual>false</IsVirtual>
 		<IsFolder>false</IsFolder>
-		<BuildCommand>cl.exe build.cpp /EHsc</BuildCommand>
+		<BuildCommand>cl.exe build.cpp /EHsc /O2</BuildCommand>
 		<RebuildCommand></RebuildCommand>
 		<BuildFileCommand></BuildFileCommand>
 		<CleanCommand></CleanCommand>
