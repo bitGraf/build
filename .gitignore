@@ -3,3 +3,7 @@ Engine/
 Game/
 RohinApp/
 bin/
+*.obj
+*.ilk
+*.exe
+*.pdb

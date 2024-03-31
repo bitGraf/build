@@ -13,6 +13,9 @@
 
 #pragma comment( lib, "Shell32" )
 
+std::string ReadFromPipe(HANDLE read_from);
+int run_command(const std::string& cmd, std::string& std_out, std::string& std_err);
+
 struct target_config;
 
 /* a `project` is an overall collection of targets with common settings 
@@ -171,58 +174,114 @@ void ensure_output_dirs(const project_config& conf) {
     bool done = true;
 }
 
-int run_command(const std::string cmd) {
-    SECURITY_ATTRIBUTES sa = {0};
-    sa.nLength = sizeof(sa);
-    sa.lpSecurityDescriptor = NULL;
-    sa.bInheritHandle = TRUE;
+std::string ReadFromPipe(HANDLE read_from)  { 
+    const size_t BUF_SIZE = 2048;
 
-    HANDLE hStdOutRd, hStdOutWr;
-    HANDLE hStdErrRd, hStdErrWr;
+    // Read output from the child process's pipe for STDOUT
+    // and write to the parent process's pipe for STDOUT. 
+    // Stop when there is no more data. 
+    DWORD dwRead; 
+    CHAR chBuf[BUF_SIZE]; 
+    BOOL bSuccess = FALSE;
 
-    
-    if (!CreatePipe(&hStdOutRd, &hStdOutWr, &sa, 0))
-    {
-        // error handling...
+    std::string output;
+    for (;;) { 
+        bSuccess = ReadFile( read_from, chBuf, BUF_SIZE, &dwRead, NULL);
+        if( ! bSuccess || dwRead == 0 ) break; 
+
+        output += std::string(chBuf, dwRead);
+    } 
+
+    return output;
+} 
+
+int run_command(const std::string& cmd, std::string& std_out, std::string& std_err) {
+    HANDLE STDOUT_Read  = NULL;
+    HANDLE STDOUT_Write = NULL;
+    HANDLE STDERR_Read  = NULL;
+    HANDLE STDERR_Write = NULL;
+
+    // Set the bInheritHandle flag so pipe handles are inherited. 
+    SECURITY_ATTRIBUTES saAttr; 
+    saAttr.nLength = sizeof(SECURITY_ATTRIBUTES); 
+    saAttr.bInheritHandle = TRUE; 
+    saAttr.lpSecurityDescriptor = NULL;
+
+    // Create a pipe for the child process's STDOUT. 
+    if (!CreatePipe(&STDOUT_Read, &STDOUT_Write, &saAttr, 0)) {
+        return -1;
+    }
+    // Ensure the read handle to the pipe for STDOUT is not inherited.
+    if (!SetHandleInformation(STDOUT_Read, HANDLE_FLAG_INHERIT, 0)) {
+        return -1;
     }
 
-    if (!CreatePipe(&hStdErrRd, &hStdErrWr, &sa, 0))
-    {
-        // error handling...
+    // Create a pipe for the child process's STDERR. 
+    if (!CreatePipe(&STDERR_Read, &STDERR_Write, &saAttr, 0)) {
+        return -1;
+    }
+    // Ensure the read handle to the pipe for STDERR is not inherited.
+    if (!SetHandleInformation(STDERR_Read, HANDLE_FLAG_INHERIT, 0)) {
+        return -1;
     }
 
-    SetHandleInformation(hStdOutRd, HANDLE_FLAG_INHERIT, 0);
-    SetHandleInformation(hStdErrRd, HANDLE_FLAG_INHERIT, 0);
+    // Configure the child process
+    PROCESS_INFORMATION piProcInfo; 
+    STARTUPINFO siStartInfo;
+    BOOL bSuccess = FALSE; 
+ 
+    ZeroMemory( &piProcInfo, sizeof(PROCESS_INFORMATION) );
+ 
+    // Set up members of the STARTUPINFO structure. 
+    // This structure specifies the STDIN and STDOUT handles for redirection.
+    ZeroMemory( &siStartInfo, sizeof(STARTUPINFO) );
+    siStartInfo.cb = sizeof(STARTUPINFO); 
+    siStartInfo.hStdError = STDERR_Write;
+    siStartInfo.hStdOutput = STDOUT_Write;
+    siStartInfo.hStdInput = NULL;
+    siStartInfo.dwFlags |= STARTF_USESTDHANDLES;
 
-    STARTUPINFOA si = {0};
-    si.cb = sizeof(si);
-    si.dwFlags = STARTF_USESTDHANDLES;
-    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
-    si.hStdOutput = hStdOutWr;
-    si.hStdError = hStdErrWr;
-
-    PROCESS_INFORMATION pi = {0};
+    // Create the child process. 
     char* cmd_line = (char*)malloc(cmd.size() + 1);
     strcpy(cmd_line, cmd.c_str());
     cmd_line[cmd.size()] = 0;
-    if (!CreateProcess(NULL, cmd_line, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi))
-    {
-        // error handling...
+    bSuccess = CreateProcess(NULL, 
+                             cmd_line,      // command line 
+                             NULL,          // process security attributes 
+                             NULL,          // primary thread security attributes 
+                             TRUE,          // handles are inherited 
+                             0,             // creation flags 
+                             NULL,          // use parent's environment 
+                             NULL,          // use parent's current directory 
+                             &siStartInfo,  // STARTUPINFO pointer 
+                             &piProcInfo);  // receives PROCESS_INFORMATION 
+
+    // If an error occurs, exit the application. 
+    if (!bSuccess) {
+        return -1;
+    } else {
+        // Close handles to the child process and its primary thread.
+        // Some applications might keep these handles to monitor the status
+        // of the child process, for example. 
+        //CloseHandle(piProcInfo.hProcess);
+        //CloseHandle(piProcInfo.hThread);
+      
+        // Close handles to the stdin and stdout pipes no longer needed by the child process.
+        // If they are not explicitly closed, there is no way to recognize that the child process has ended.
+        CloseHandle(STDOUT_Write);
+        CloseHandle(STDERR_Write);
     }
-    else
-    {
-        // read from hStdOutRd and hStdErrRd as needed until the process is terminated...
 
-        CloseHandle(pi.hThread);
-        CloseHandle(pi.hProcess);
-    }
+    std_out = ReadFromPipe(STDOUT_Read);
+    std_err = ReadFromPipe(STDERR_Read);
 
-    CloseHandle(hStdOutRd);
-    CloseHandle(hStdOutWr);
-    CloseHandle(hStdErrRd);
-    CloseHandle(hStdErrWr);
+    // get the error code once its done
+    DWORD exit_code;
+    GetExitCodeProcess(piProcInfo.hProcess, &exit_code);
+    CloseHandle(piProcInfo.hProcess);
+    CloseHandle(piProcInfo.hThread);
 
-    return 0;
+    return exit_code;
 }
 
 int build_project(const project_config& conf) {
@@ -239,14 +298,18 @@ int build_project(const project_config& conf) {
         printf("Done.\n");
 
         printf("    Building [%s]...", targ.target_name.c_str());
-        int res = system(cmd.c_str());
+        //int res = system(cmd.c_str());
+
+        std::string std_out, std_err;
+        int res = run_command(cmd, std_out, std_err);
 
         if (res) {
-            printf("    Building [%s]...Failed! ErrorCode: %d\n", targ.target_name.c_str(), res);
+            printf("Failed! ErrorCode: %d\n", res);
+            printf("%s\n", std_out.c_str());
             return res;
         }
 
-        printf("    Building [%s]...Done.\n", targ.target_name.c_str());
+        printf("Done.\n");
     }
 
     return 0;
