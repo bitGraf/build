@@ -47,6 +47,40 @@ cl.exe build.cpp -EHsc
 
 After this first manual compile, you should have an executable called `build.exe` that if you run, will compile the actual project you configure. if you include `auto_rebuild_self(argc, argv);` at the start of your main function, you don't even need to rebuild build.cpp if you redefine your project configuration, as it will rebuild itself.
 
+You can even define multiple build-scripts and include them like you would do add_subdirectory() in CMake. Just define one of these subdirectories like:
+
+```c++
+#ifndef __BUILD_H__
+#include "build.h"
+#endif
+
+target_config targ2;
+// . . .
+
+proj.targets.push_back(targ2);
+```
+
+And then include in your main build-script by using `#include` in the main() function
+
+```c++
+...
+    project_config proj;
+
+    target_config targ1;
+    proj.targets.push_back(targ1);
+
+    #include "path/to/targ2.cpp"
+
+    build_project(proj);
+...
+```
+
+# Example
+There is an simple example included that defines a few targets
+* shared_lib/ includes a target that generates a shared library (.dll)
+* executable/ includes a target that generates an executable, and links to shared_lib.dll
+* build.cpp is the build script that generates both of those targets.
+
 # Todo
 * clean up the difference between 'project-level' and 'target-level' options
 * improve the functionality of incremental_build
