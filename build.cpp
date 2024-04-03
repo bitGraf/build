@@ -6,6 +6,8 @@ int main(int argc, char** argv) {
     }
     printf("--------------------------------\n");
 
+    auto_rebuild_self(argc, argv);
+
     project_config conf;
     conf.project_name = "test";
     conf.cpp_standard = 14;
@@ -26,9 +28,20 @@ int main(int argc, char** argv) {
     #include "shared_lib/build.cpp"
     #include "executable/build.cpp"
 
+    LARGE_INTEGER freq, start, end;
+    QueryPerformanceFrequency(&freq);
+
+    QueryPerformanceCounter(&start);
     int err_code;
     //err_code = build_project(conf);
     err_code = build_project_incremental(conf);
+    QueryPerformanceCounter(&end);
+
+    double elapsed = (double)(end.QuadPart - start.QuadPart) / (double)(freq.QuadPart) * 1000.0;
+    if (elapsed > 2000.0)
+        printf("%.2f sec elapsed.\n", elapsed/1000.0);
+    else
+        printf("%.3f ms elapsed.\n", elapsed);
 
     return err_code;
 }
