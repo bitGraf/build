@@ -812,10 +812,10 @@ void _auto_rebuild_self(int argc, char* argv[], const char* src_filename) {
     conf.debug_build = true;
     conf.static_link_std = true;
     conf.opt_level = 0;
-    conf.opt_intrinsics = true;
-    conf.generate_debug_info = true;
+    conf.opt_intrinsics = false;
+    conf.generate_debug_info = false;
     conf.incremental_link = false;
-    conf.remove_unref_funcs = true;
+    conf.remove_unref_funcs = false;
 
     target_config targ;
     targ.target_name = "_build";
@@ -826,7 +826,7 @@ void _auto_rebuild_self(int argc, char* argv[], const char* src_filename) {
     targ.include_dirs;
     targ.src_files = { src_filename };
     targ.warnings_to_ignore = { /*4100, 4189, 4505, 4201*/ /*4723*/ };
-    targ.warning_level = 0;
+    targ.warning_level = 1;
     targ.warnings_are_errors = false;
     targ.subsystem = "console";
     conf.targets.push_back(targ);
@@ -842,6 +842,10 @@ void _auto_rebuild_self(int argc, char* argv[], const char* src_filename) {
     uint64 build_hpp_stamp = get_file_timestamp("build.h");
     uint64 src_stamp = max(build_cpp_stamp, build_hpp_stamp);
     uint64 build_exe_stamp = get_file_timestamp("build.exe");
+
+    printf("exe       timestamp: %llu\n", build_exe_stamp);
+    printf("%s        timestamp: %llu\n", src_filename, build_cpp_stamp);
+    printf("build.h   timestamp: %llu\n", build_hpp_stamp);
 
     bool need_rebuild = (src_stamp >= build_exe_stamp);
 

@@ -21,10 +21,6 @@ int main(int argc, char** argv) {
     conf.incremental_link = false;
     conf.remove_unref_funcs = true;
 
-    //#include "Engine/build_engine_dll.cpp"
-    //#include "RohinApp/build_rohinapp_exe.cpp"
-    //#include "Game/build_game_dll.cpp"
-
     #include "shared_lib/build.cpp"
     #include "executable/build.cpp"
 
